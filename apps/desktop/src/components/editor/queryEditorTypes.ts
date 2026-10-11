@@ -23,6 +23,7 @@ export interface QueryEditorProps {
   executionError?: string;
   executionErrorSql?: string;
   executionErrorResult?: QueryResult;
+  inlineQueryResults?: QueryResult[];
   resultColumns?: string[];
   resultSourceStatement?: string;
   resultSourceFrom?: number;
