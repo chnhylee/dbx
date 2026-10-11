@@ -4,6 +4,7 @@ import type { QueryTab } from "@/types/database";
 // The original result panel keeps these fields on the tab. Each inline panel
 // retains its own copy, and restores it before invoking the original actions.
 export const inlineResultStateKeys = [
+  "resultGridRevision",
   "resultSortColumn",
   "resultSortColumnIndex",
   "resultSortDirection",

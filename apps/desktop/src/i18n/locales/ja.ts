@@ -7846,6 +7846,7 @@ export default withEnglishFallback({
     showExecutionTargetPicker: "実行対象ピッカーを表示",
     showExecutionTargetPickerDescription: "有効にすると、選択なしで実行するときに現在の文とすべてのSQLを一時的に選べます。",
     inlineQueryResults: "SQL の下にクエリ結果を表示",
+    inlineQueryResultsDescription: "対応する SQL の下にクエリ結果を表示します。再実行すると、その文の表だけを更新し、他の文の結果は保持します。",
     showStatementRunButtons: "左側の実行ボタンを表示",
     showStatementRunButtonsDescription: "SQLエディターのガターに文ごとの実行ボタンを表示します。無効にしてもキーボードショートカットとコンテキストメニューからの実行は引き続き使えます。",
     locateCursorOnGutterExecute: "ガター実行時にカーソルを文の先頭へ移動",

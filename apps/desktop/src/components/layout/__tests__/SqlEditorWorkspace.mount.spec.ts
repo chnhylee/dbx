@@ -101,7 +101,7 @@ vi.mock("@/components/layout/QueryResultSurface.vue", () => ({
         return true;
       },
     },
-    template: `<div data-test="result-surface" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-sort-column="activeTab?.resultSortColumn">{{ activeTab?.id }}<button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
+    template: `<div data-test="result-surface" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-sort-column="activeTab?.resultSortColumn" :data-grid-revision="activeTab?.resultGridRevision">{{ activeTab?.id }}<button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
   },
 }));
 
@@ -231,6 +231,7 @@ describe("SqlEditorWorkspace mount contract", () => {
     queryTab.result = first;
     queryTab.activeResultIndex = 0;
     queryTab.resultSortColumn = "one";
+    queryTab.resultGridRevision = "first-grid";
     const workspace = mountOutputWorkspace([queryTab]);
     try {
       const tab = workspace.store.tabs[0]!;
@@ -248,11 +249,14 @@ describe("SqlEditorWorkspace mount contract", () => {
       expect(tab.activeResultIndex).toBe(1);
       expect(tab.resultSortColumn).toBeUndefined();
       tab.resultSortColumn = "two";
+      tab.resultGridRevision = "second-grid";
       await nextTick();
       firstHost.querySelector("[data-shared-result-surface]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       await nextTick();
       expect(tab.activeResultIndex).toBe(0);
       expect(tab.resultSortColumn).toBe("one");
+      expect(tab.resultGridRevision).toBe("first-grid");
+      expect(secondHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-grid-revision")).toBe("second-grid");
       expect(secondHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-sort-column")).toBe("two");
     } finally {
       workspace.cleanup();

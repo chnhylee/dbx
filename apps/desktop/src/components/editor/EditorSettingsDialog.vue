@@ -6757,10 +6757,6 @@ onUnmounted(() => {
               </div>
 
               <div class="grid grid-cols-2 gap-2 lg:grid-cols-4" data-editor-preview-controls>
-                <div class="settings-item flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
-                  <Label for="editor-inline-query-results" class="text-xs">{{ t("settings.inlineQueryResults") }}</Label>
-                  <Switch id="editor-inline-query-results" v-model="editInlineQueryResults" size="sm" />
-                </div>
                 <div class="settings-item flex min-w-0 items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
                   <div class="flex min-w-0 items-center gap-1">
                     <Label for="editor-show-statement-run-buttons" class="truncate text-xs">{{ t("settings.showStatementRunButtons") }}</Label>
@@ -6928,6 +6924,13 @@ onUnmounted(() => {
                     </p>
                   </div>
                   <Switch id="editor-continue-on-error" v-model="editContinueOnErrorOnBatch" class="mt-0.5" />
+                </div>
+                <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="editor-inline-query-results">{{ t("settings.inlineQueryResults") }}</Label>
+                    <p class="text-xs text-muted-foreground">{{ t("settings.inlineQueryResultsDescription") }}</p>
+                  </div>
+                  <Switch id="editor-inline-query-results" v-model="editInlineQueryResults" class="mt-0.5" />
                 </div>
               </div>
 

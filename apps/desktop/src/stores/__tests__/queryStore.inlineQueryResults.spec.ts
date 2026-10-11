@@ -1,14 +1,16 @@
+import { nextTick, watch } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { inlineQueryResultEntries } from "@/lib/editor/inlineQueryResultEntries";
-const mocks = vi.hoisted(() => ({ executeMulti: vi.fn(), closeQuerySession: vi.fn(), settings: { inlineQueryResults: true, pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false } }));
+const mocks = vi.hoisted(() => ({ executeMulti: vi.fn(), executeMultiWithProgress: vi.fn(), analyze: vi.fn(), closeQuerySession: vi.fn(), settings: { inlineQueryResults: true, pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false } }));
 vi.mock("@/lib/backend/api", () => ({
   executeMulti: mocks.executeMulti,
+  executeMultiWithProgress: mocks.executeMultiWithProgress,
   closeQuerySession: mocks.closeQuerySession,
   closeClientConnectionSession: vi.fn().mockResolvedValue(true),
   saveOpenTabsState: vi.fn().mockResolvedValue(undefined),
   prepareQueryPaginationExecutionPlan: vi.fn(async ({ sql }: { sql: string }) => ({ sqlToExecute: sql })),
-  analyzeEditableQueryEditability: vi.fn().mockResolvedValue({ editable: false, reason: "no-table" }),
+  analyzeEditableQueryEditability: mocks.analyze,
 }));
 vi.mock("@/stores/connectionStore", () => ({
   useConnectionStore: () => ({
@@ -22,6 +24,7 @@ vi.mock("@/stores/settingsStore", () => ({ useSettingsStore: () => ({ editorSett
 describe("queryStore inline executions", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.analyze.mockResolvedValue({ editable: false, reason: "no-table" });
     mocks.settings.inlineQueryResults = true;
     setActivePinia(createPinia());
     mocks.executeMulti.mockImplementation(async (_id, _database, sql: string) => [{ columns: ["value"], rows: [[sql.includes("2") ? 2 : 1]], affected_rows: 0, execution_time_ms: 1 }]);
@@ -52,6 +55,51 @@ describe("queryStore inline executions", { timeout: 30_000 }, () => {
     store.pruneInlineResultRuns(id, new Set(entries.map((entry) => entry.run!.id)));
     expect(tab.resultRuns).toHaveLength(2);
     release();
+  });
+  it("keeps the other batch result while a single statement is published and finalized", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    const tab = store.tabs[0]!;
+    tab.sql = "SELECT 1;\nSELECT 2;";
+    const payload = (value: number) => ({ columns: ["value"], rows: [[value]], affected_rows: 0, execution_time_ms: 1 });
+
+    mocks.executeMultiWithProgress.mockResolvedValueOnce([payload(1), payload(2)]);
+    const stop = watch(
+      () => inlineQueryResultEntries(tab),
+      (entries) => store.pruneInlineResultRuns(id, new Set(entries.flatMap((entry) => (entry.run ? [entry.run.id] : [])))),
+      { flush: "post" },
+    );
+    try {
+      await store.executeCurrentSql(tab.sql, { tabId: id, sourceOffset: 0 });
+      await nextTick();
+      const untouched = inlineQueryResultEntries(tab)[1]!.result;
+      let finishMetadata!: (value: { editable: boolean; reason: string }) => void;
+      mocks.analyze.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishMetadata = resolve;
+          }),
+      );
+      mocks.executeMulti.mockResolvedValueOnce([payload(11)]);
+      const execution = store.executeCurrentSql("SELECT 1;", { tabId: id, sourceOffset: 0 });
+      await vi.waitFor(() => expect(finishMetadata).toBeDefined());
+      await nextTick();
+      expect(inlineQueryResultEntries(tab)[1]!.result).toBe(untouched);
+      finishMetadata({ editable: false, reason: "no-table" });
+      await execution;
+      await nextTick();
+      expect(inlineQueryResultEntries(tab).map((entry) => entry.result.rows[0]?.[0])).toEqual([11, 2]);
+      expect(inlineQueryResultEntries(tab)[1]!.result).toBe(untouched);
+      mocks.executeMulti.mockResolvedValueOnce([payload(22)]);
+      await store.executeCurrentSql("SELECT 2;", { tabId: id, sourceOffset: 10 });
+      await nextTick();
+      expect(inlineQueryResultEntries(tab).map((entry) => entry.result.rows[0]?.[0])).toEqual([11, 22]);
+    } finally {
+      stop();
+      release();
+    }
   });
   it("does not retain results when the inline setting is disabled", async () => {
     const { useQueryStore } = await import("@/stores/queryStore");
