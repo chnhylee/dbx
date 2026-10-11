@@ -2,7 +2,19 @@ import { nextTick, watch } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { inlineQueryResultEntries } from "@/lib/editor/inlineQueryResultEntries";
-const mocks = vi.hoisted(() => ({ executeMulti: vi.fn(), executeMultiWithProgress: vi.fn(), analyze: vi.fn(), closeQuerySession: vi.fn(), settings: { inlineQueryResults: true, pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false } }));
+const mocks = vi.hoisted(() => ({
+  writeSnapshot: vi.fn(),
+  executeMulti: vi.fn(),
+  executeMultiWithProgress: vi.fn(),
+  analyze: vi.fn(),
+  closeQuerySession: vi.fn(),
+  settings: { inlineQueryResults: true, pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false },
+}));
+vi.mock("@/lib/tabs/tabResultCache", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tabs/tabResultCache")>()),
+  writeTabResultSnapshot: mocks.writeSnapshot,
+  deleteTabResultSnapshot: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/backend/api", () => ({
   executeMulti: mocks.executeMulti,
   executeMultiWithProgress: mocks.executeMultiWithProgress,
@@ -24,11 +36,76 @@ vi.mock("@/stores/settingsStore", () => ({ useSettingsStore: () => ({ editorSett
 describe("queryStore inline executions", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.writeSnapshot.mockResolvedValue(true);
     mocks.analyze.mockResolvedValue({ editable: false, reason: "no-table" });
     mocks.settings.inlineQueryResults = true;
     setActivePinia(createPinia());
     mocks.executeMulti.mockImplementation(async (_id, _database, sql: string) => [{ columns: ["value"], rows: [[sql.includes("2") ? 2 : 1]], affected_rows: 0, execution_time_ms: 1 }]);
     mocks.closeQuerySession.mockResolvedValue(true);
+  });
+  it.each(["autosaved", "pinned", "auto-save-disabled"])("keeps %s rows after successful history persistence and a different statement executes", async (mode) => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    const tab = store.tabs[0]!;
+    tab.sql = "SELECT 1;\nSELECT 2;";
+    store.toggleResultAutoSave(id);
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    const first = tab.result!;
+    if (mode === "pinned") store.toggleResultRunPinned(id, tab.activeResultRunId!);
+    if (mode === "auto-save-disabled") store.toggleResultAutoSave(id);
+    await store.executeTabSql(id, "SELECT 2;", { sourceOffset: 10 });
+    await vi.waitFor(() => expect(mocks.writeSnapshot).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(first.rows).toEqual([[1]]);
+    expect(inlineQueryResultEntries(tab).map((entry) => entry.result.rows[0]?.[0])).toEqual([1, 2]);
+    mocks.executeMulti.mockResolvedValueOnce([{ columns: ["value"], rows: [[11]], affected_rows: 0, execution_time_ms: 1 }]);
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(inlineQueryResultEntries(tab).map((entry) => entry.result.rows[0]?.[0])).toEqual([11, 2]);
+    release();
+  });
+  it("rechecks inline retention when an earlier disk write finishes after opting in", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    const tab = store.tabs[0]!;
+    tab.sql = "SELECT 1;\nSELECT 2;";
+    store.toggleResultAutoSave(id);
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    const first = tab.result!;
+    mocks.settings.inlineQueryResults = false;
+    const finishWrites: Array<(value: boolean) => void> = [];
+    mocks.writeSnapshot.mockImplementation(() => new Promise((resolve) => finishWrites.push(resolve)));
+    await store.executeTabSql(id, "SELECT 2;", { sourceOffset: 10 });
+    await vi.waitFor(() => expect(finishWrites.length).toBeGreaterThan(0));
+    mocks.settings.inlineQueryResults = true;
+    finishWrites.forEach((finish) => finish(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(first.rows).toEqual([[1]]);
+    expect(inlineQueryResultEntries(tab)).toHaveLength(2);
+    mocks.writeSnapshot.mockResolvedValue(true);
+    release();
+  });
+  it("applies the same memory budget to pinned and autosaved history without deleting history", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    const tab = store.tabs[0]!;
+    store.toggleResultAutoSave(id);
+    for (let i = 0; i < 10; i++) {
+      await store.executeTabSql(id, `SELECT ${i};`, { sourceOffset: i * 10 });
+      if (i === 0) store.toggleResultRunPinned(id, tab.activeResultRunId!);
+    }
+    await vi.waitFor(() => expect(tab.resultRuns![0]!.resultEvicted).toBe(true));
+    expect(tab.resultRuns).toHaveLength(10);
+    expect(tab.resultRuns![0]!.pinned).toBe(true);
+    expect(tab.resultRuns!.filter((run) => run.result)).toHaveLength(9);
+    expect(tab.resultRuns![0]!.resultCacheState).toBe("disk");
+    release();
   });
   it("retains two separately executed statements and replaces only the rerun slot", async () => {
     const { useQueryStore } = await import("@/stores/queryStore");

@@ -2209,23 +2209,33 @@ export const useQueryStore = defineStore("query", () => {
     );
   }
 
-  // LRU limits apply to inactive inline-only payloads. The current result and
-  // explicitly pinned/autosaved history keep their existing lifetime policy.
+  // inlineRetained marks disposable history, not whether a grid uses its rows.
+  // Autosaved and pinned runs also supply inline grids and share the LRU budget;
+  // evict their payloads to disk without removing their history entries.
   const inlineRunAccess = new WeakMap<QueryResult, number>();
   let inlineAccessClock = 0;
-  function enforceInlineResultBudget(tab: QueryTab) {
-    const candidates = (tab.resultRuns ?? []).filter((run) => run.inlineRetained && !run.pinned && run.id !== tab.activeResultRunId);
+  function retainedInlineRunIds(tab: QueryTab): Set<string> {
+    if (!inlineResultConsumers || !useSettingsStore().editorSettings.inlineQueryResults || tab.mode !== "query") return new Set();
+    const candidates = (tab.resultRuns ?? []).filter((run) => resultRunHasPayload(run) && run.id !== tab.activeResultRunId);
     candidates.sort((a, b) => (inlineRunAccess.get(a.result!) ?? a.sequence) - (inlineRunAccess.get(b.result!) ?? b.sequence));
     const rows = (run: QueryResultRun) => (run.results ?? (run.result ? [run.result] : [])).reduce((sum, result) => sum + result.rows.length, 0);
     let totalRows = candidates.reduce((sum, run) => sum + rows(run), 0);
     while (candidates.length > 8 || totalRows > 20000) {
       const removed = candidates.shift()!;
       totalRows -= rows(removed);
-      void closeResultRunSession(tab, removed);
-      if (removed.resultCacheKey) void deleteTabResultSnapshot(removed.resultCacheKey);
-      inlineRunAccess.delete(removed.result!);
-      tab.resultRuns = tab.resultRuns?.filter((run) => run.id !== removed.id);
     }
+    return new Set(candidates.map((run) => run.id));
+  }
+  function enforceInlineResultBudget(tab: QueryTab) {
+    const retained = retainedInlineRunIds(tab);
+    for (const run of tab.resultRuns ?? []) {
+      if (!run.inlineRetained || run.pinned || run.id === tab.activeResultRunId || retained.has(run.id)) continue;
+      void closeResultRunSession(tab, run);
+      if (run.resultCacheKey) void deleteTabResultSnapshot(run.resultCacheKey);
+      if (run.result) inlineRunAccess.delete(run.result);
+      tab.resultRuns = tab.resultRuns?.filter((item) => item.id !== run.id);
+    }
+    return retained;
   }
   function activateInlineQueryResult(id: string, result: QueryResult, index: number, runId: string | undefined, state: Partial<QueryTab>) {
     const tab = findExecutionTab(id);
@@ -2238,18 +2248,18 @@ export const useQueryStore = defineStore("query", () => {
     // Restore only the shared per-result contract; never assign arbitrary tab fields.
     for (const key of inlineResultStateKeys) Object.assign(tab, { [key]: state[key] });
     inlineRunAccess.set(result, ++inlineAccessClock);
-    enforceInlineResultBudget(tab);
+    evictInactiveResultRunPayloads(tab);
     return true;
   }
 
   function evictInactiveResultRunPayloads(tab: QueryTab) {
-    enforceInlineResultBudget(tab);
+    const retained = enforceInlineResultBudget(tab);
     const activeRunId = tab.activeResultRunId;
     if (!activeRunId || !tab.resultRuns?.length) return;
 
     for (const run of tab.resultRuns) {
       if (run.id === activeRunId || !resultRunHasPayload(run)) continue;
-      if (run.inlineRetained) {
+      if (retained.has(run.id)) {
         // Other statement grids still render this payload. Release its cursor
         // as usual, but keep the rows until its statement is executed again.
         void closeResultRunSession(tab, run);
@@ -2261,6 +2271,9 @@ export const useQueryStore = defineStore("query", () => {
         .then((cached) => {
           const currentRun = tab.resultRuns?.find((item) => item.id === runId);
           if (!cached || !currentRun || currentRun.id === tab.activeResultRunId || !resultRunHasPayload(currentRun)) return;
+          // Persistence may finish after an execution, activation, or setting
+          // change. Recheck ownership before mutating shared QueryResult rows.
+          if (retainedInlineRunIds(tab).has(currentRun.id)) return;
           if (tab.result === currentRun.result || (currentRun.results && tab.results === currentRun.results)) return;
           clearResultRunPayload(currentRun, { evicted: true });
         });

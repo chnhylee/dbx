@@ -181,7 +181,14 @@ const showResultPane = computed({
     if (tab?.mode === "query") queryStore.updateTabUiState(tab.id, { resultPaneOpen: open });
   },
 });
-const isResultPaneVisible = computed(() => hasSharedOutput.value && showResultPane.value);
+// Availability includes blocks outside the viewport. Keep history reachable
+// independently of the bottom pane while its selected result is shown inline.
+const inlineHistoryOnly = computed(() => {
+  const tab = activeTab.value;
+  const available = tab ? (inlineResultPortal.available.get(tab.id) ?? inlineEntries.value.map((entry) => entry.result)) : [];
+  return settingsStore.editorSettings.inlineQueryResults && props.activeOutputView === "result" && !!tab?.result && available.includes(tab.result);
+});
+const isResultPaneVisible = computed(() => hasSharedOutput.value && showResultPane.value && !inlineHistoryOnly.value);
 // Keep the pane mounted, but apply its target size immediately so available
 // results never wait for an expansion animation before becoming visible.
 const resultPaneTargetSize = computed(() => (isResultPaneVisible.value ? resultPaneSize.value : 0));
@@ -440,6 +447,7 @@ function handleFocusErrorOffset(tabId: string, offset: number): boolean {
           </template>
         </Pane>
       </Splitpanes>
+      <QueryResultSurface v-if="inlineHistoryOnly && !contentSuppressed" v-bind="resultSurfaceBindings" :history-only="true" class="h-10 shrink-0 border-t" @preview-statement="handlePreviewStatement" @focus-statement="handleFocusStatement" @focus-error-offset="handleFocusErrorOffset" />
       <!-- The shared surface unmounts when collapsed, so the mouse re-show
          affordance lives here, outside the collapsible pane. -->
       <Button
