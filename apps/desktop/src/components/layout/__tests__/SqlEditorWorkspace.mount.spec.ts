@@ -107,7 +107,7 @@ vi.mock("@/components/layout/QueryResultSurface.vue", () => ({
 
 import SqlEditorWorkspace from "../SqlEditorWorkspace.vue";
 import { useQueryStore } from "@/stores/queryStore";
-import { useSettingsStore } from "@/stores/settingsStore";
+import { DEFAULT_EDITOR_SETTINGS, useSettingsStore } from "@/stores/settingsStore";
 import type { QueryTab } from "@/types/database";
 
 function tab(id: string): QueryTab {
@@ -139,6 +139,7 @@ describe("SqlEditorWorkspace mount contract", () => {
 
   function mountOutputWorkspace(tabs: QueryTab[]) {
     const store = useQueryStore();
+    useSettingsStore().editorSettings.inlineQueryResults = true;
     store.tabs = tabs;
     store.activeTabId = tabs[0]!.id;
     store.groups = [{ id: "g1", tabIds: tabs.map((item) => item.id), activeTabId: tabs[0]!.id }];
@@ -170,7 +171,37 @@ describe("SqlEditorWorkspace mount contract", () => {
     };
   }
 
-  it("renders original result surfaces into separate hosts and restores the bottom fallback", async () => {
+  it("defaults to the bottom workflow and supports opting in and out without hiding history", async () => {
+    expect(DEFAULT_EDITOR_SETTINGS.inlineQueryResults).toBe(false);
+    const workspace = mountOutputWorkspace([tab("optional")]);
+    try {
+      const settings = useSettingsStore();
+      settings.editorSettings.inlineQueryResults = false;
+      const target = document.createElement("div");
+      workspace.host.append(target);
+      inlinePortals[0]!.mount("optional", workspace.store.tabs[0]!.result!, target);
+      await nextTick();
+      expect(target.children).toHaveLength(0);
+      expect(workspace.host.querySelector('[data-test="result-surface"]')).not.toBeNull();
+      settings.editorSettings.inlineQueryResults = true;
+      await nextTick();
+      expect(target.querySelector('[data-test="result-surface"]')).not.toBeNull();
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(2);
+      workspace.vm.toggleResultsPane();
+      await nextTick();
+      expect(target.querySelector('[data-test="result-surface"]')).not.toBeNull();
+      workspace.vm.toggleResultsPane();
+      await nextTick();
+      settings.editorSettings.inlineQueryResults = false;
+      await nextTick();
+      expect(target.children).toHaveLength(0);
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(1);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
+  it("renders original result surfaces into separate hosts while keeping bottom history", async () => {
     const workspace = mountOutputWorkspace([tab("inline-one")]);
     try {
       await nextTick();
@@ -181,7 +212,7 @@ describe("SqlEditorWorkspace mount contract", () => {
       inlinePortals[0]!.mount("inline-one", workspace.store.tabs[0]!.result!, target);
       await nextTick();
       expect(target.querySelector('[data-test="result-surface"]')).not.toBeNull();
-      expect(workspace.host.querySelectorAll("[data-shared-result-surface]")).toHaveLength(1);
+      expect(workspace.host.querySelectorAll("[data-shared-result-surface]")).toHaveLength(2);
       inlinePortals[0]!.unmount("inline-one", workspace.store.tabs[0]!.result!, target);
       await nextTick();
       expect(target.children).toHaveLength(0);
@@ -209,7 +240,7 @@ describe("SqlEditorWorkspace mount contract", () => {
       inlinePortals[0]!.mount(tab.id, tab.results![0]!, firstHost);
       inlinePortals[0]!.mount(tab.id, tab.results![1]!, secondHost);
       await nextTick();
-      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(2);
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(3);
       expect(firstHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-result-value")).toBe("1");
       expect(secondHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-result-value")).toBe("2");
       secondHost.querySelector("[data-shared-result-surface]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
@@ -228,12 +259,12 @@ describe("SqlEditorWorkspace mount contract", () => {
     }
   });
 
-  it("does not reopen the bottom pane when inline widgets leave the rendered viewport", async () => {
+  it("keeps Run history in the bottom pane when inline widgets leave the rendered viewport", async () => {
     const workspace = mountOutputWorkspace([tab("offscreen")]);
     try {
       inlinePortals[0]!.sync("offscreen", [workspace.store.tabs[0]!.result!]);
       await nextTick();
-      expect(workspace.host.querySelector("[data-shared-result-surface]")).toBeNull();
+      expect(workspace.host.querySelector("[data-shared-result-surface]")).not.toBeNull();
       inlinePortals[0]!.sync("offscreen", []);
       await nextTick();
       expect(workspace.host.querySelector("[data-shared-result-surface]")).not.toBeNull();
@@ -263,12 +294,12 @@ describe("SqlEditorWorkspace mount contract", () => {
       inlinePortals[0]!.mount(tab.id, tab.resultRuns![0]!.result!, firstHost);
       inlinePortals[0]!.mount(tab.id, tab.resultRuns![1]!.result!, secondHost);
       await nextTick();
-      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(2);
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(3);
       firstHost.querySelector("[data-shared-result-surface]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       await nextTick();
       expect(tab.activeResultRunId).toBe("run-one");
       expect(tab.resultBaseSql).toBe("SELECT 1;");
-      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(2);
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(3);
       expect(secondHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-result-value")).toBe("2");
       secondHost.querySelector("[data-shared-result-surface]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       await nextTick();

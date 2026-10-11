@@ -690,6 +690,7 @@ const executeModeLabel = computed(() => t("settings.executeMode"));
 const executeModeDescription = computed(() => translateWithExecuteShortcut("settings.executeModeDescription"));
 const editExecuteAllOnBlankLine = ref(settingsStore.editorSettings.executeAllOnBlankLine);
 const editShowExecutionTargetPicker = ref(settingsStore.editorSettings.showExecutionTargetPicker);
+const editInlineQueryResults = ref(settingsStore.editorSettings.inlineQueryResults);
 const editShowStatementRunButtons = ref(settingsStore.editorSettings.showStatementRunButtons);
 const editLocateCursorOnGutterExecute = ref(settingsStore.editorSettings.locateCursorOnGutterExecute);
 const editShowLineNumbers = ref(settingsStore.editorSettings.showLineNumbers);
@@ -1096,6 +1097,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     keepExplicitTransactionInAutoCommit: editKeepExplicitTransactionInAutoCommit.value,
     executeAllOnBlankLine: editExecuteAllOnBlankLine.value,
     showExecutionTargetPicker: editShowExecutionTargetPicker.value,
+    inlineQueryResults: editInlineQueryResults.value,
     showStatementRunButtons: editShowStatementRunButtons.value,
     locateCursorOnGutterExecute: editLocateCursorOnGutterExecute.value,
     showLineNumbers: editShowLineNumbers.value,
@@ -1782,6 +1784,7 @@ function syncEditorSettingsDraftFromStore() {
   editKeepExplicitTransactionInAutoCommit.value = settingsStore.editorSettings.keepExplicitTransactionInAutoCommit;
   editExecuteAllOnBlankLine.value = settingsStore.editorSettings.executeAllOnBlankLine;
   editShowExecutionTargetPicker.value = settingsStore.editorSettings.showExecutionTargetPicker;
+  editInlineQueryResults.value = settingsStore.editorSettings.inlineQueryResults;
   editShowStatementRunButtons.value = settingsStore.editorSettings.showStatementRunButtons;
   editLocateCursorOnGutterExecute.value = settingsStore.editorSettings.locateCursorOnGutterExecute;
   editShowLineNumbers.value = settingsStore.editorSettings.showLineNumbers;
@@ -1947,6 +1950,7 @@ const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
   executeMode: editExecuteMode,
   executeAllOnBlankLine: editExecuteAllOnBlankLine,
   showExecutionTargetPicker: editShowExecutionTargetPicker,
+  inlineQueryResults: editInlineQueryResults,
   showStatementRunButtons: editShowStatementRunButtons,
   locateCursorOnGutterExecute: editLocateCursorOnGutterExecute,
   showLineNumbers: editShowLineNumbers,
@@ -2488,6 +2492,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editKeepExplicitTransactionInAutoCommit.value = DEFAULT_EDITOR_SETTINGS.keepExplicitTransactionInAutoCommit;
     editExecuteAllOnBlankLine.value = DEFAULT_EDITOR_SETTINGS.executeAllOnBlankLine;
     editShowExecutionTargetPicker.value = DEFAULT_EDITOR_SETTINGS.showExecutionTargetPicker;
+    editInlineQueryResults.value = DEFAULT_EDITOR_SETTINGS.inlineQueryResults;
     editShowStatementRunButtons.value = DEFAULT_EDITOR_SETTINGS.showStatementRunButtons;
     editLocateCursorOnGutterExecute.value = DEFAULT_EDITOR_SETTINGS.locateCursorOnGutterExecute;
     editShowLineNumbers.value = DEFAULT_EDITOR_SETTINGS.showLineNumbers;
@@ -2673,6 +2678,7 @@ function resetAllDefaults() {
   editKeepExplicitTransactionInAutoCommit.value = DEFAULT_EDITOR_SETTINGS.keepExplicitTransactionInAutoCommit;
   editExecuteAllOnBlankLine.value = DEFAULT_EDITOR_SETTINGS.executeAllOnBlankLine;
   editShowExecutionTargetPicker.value = DEFAULT_EDITOR_SETTINGS.showExecutionTargetPicker;
+  editInlineQueryResults.value = DEFAULT_EDITOR_SETTINGS.inlineQueryResults;
   editShowStatementRunButtons.value = DEFAULT_EDITOR_SETTINGS.showStatementRunButtons;
   editLocateCursorOnGutterExecute.value = DEFAULT_EDITOR_SETTINGS.locateCursorOnGutterExecute;
   editShowLineNumbers.value = DEFAULT_EDITOR_SETTINGS.showLineNumbers;
@@ -6751,6 +6757,10 @@ onUnmounted(() => {
               </div>
 
               <div class="grid grid-cols-2 gap-2 lg:grid-cols-4" data-editor-preview-controls>
+                <div class="settings-item flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
+                  <Label for="editor-inline-query-results" class="text-xs">{{ t("settings.inlineQueryResults") }}</Label>
+                  <Switch id="editor-inline-query-results" v-model="editInlineQueryResults" size="sm" />
+                </div>
                 <div class="settings-item flex min-w-0 items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
                   <div class="flex min-w-0 items-center gap-1">
                     <Label for="editor-show-statement-run-buttons" class="truncate text-xs">{{ t("settings.showStatementRunButtons") }}</Label>

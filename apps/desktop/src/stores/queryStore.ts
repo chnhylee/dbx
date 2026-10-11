@@ -1,3 +1,4 @@
+import { inlineResultStateKeys } from "@/lib/editor/inlineQueryResultState";
 import { hasShortDataGridSqlPage } from "@/lib/dataGrid/dataGridPagination";
 import { createQueryRequestTiming } from "@/lib/queryRequestTiming";
 import { appendNeo4jNodeCells, extractNeo4jNodeCells } from "@/lib/neo4j/neo4jNodeResult";
@@ -24,6 +25,7 @@ import type {
   ObjectSource,
   ObjectSourceKind,
   QueryResult,
+  QueryResultRun,
   QueryResultSourceColumnRef,
   QueryTab,
   TableInfoTab,
@@ -1997,6 +1999,7 @@ export const useQueryStore = defineStore("query", () => {
     if (options.isCurrent && !options.isCurrent()) return false;
     if (!run?.result && !run?.results?.length) return false;
     projectResultRun(tab, run);
+    if (tab.result) inlineRunAccess.set(run.result ?? tab.result, ++inlineAccessClock);
     if (options.evictInactive !== false) evictInactiveResultRunPayloads(tab);
     return true;
   }
@@ -2007,6 +2010,7 @@ export const useQueryStore = defineStore("query", () => {
     if (!tab?.resultRuns || runIndex < 0) return undefined;
 
     const run = { ...tab.resultRuns[runIndex]!, pinned: tab.resultRuns[runIndex]!.pinned ? undefined : true };
+    if (run.pinned) run.inlineRetained = undefined;
     tab.resultRuns[runIndex] = run;
     void persistResultRun(tab, run);
     return run.pinned === true;
@@ -2205,7 +2209,41 @@ export const useQueryStore = defineStore("query", () => {
     );
   }
 
+  // LRU limits apply to inactive inline-only payloads. The current result and
+  // explicitly pinned/autosaved history keep their existing lifetime policy.
+  const inlineRunAccess = new WeakMap<QueryResult, number>();
+  let inlineAccessClock = 0;
+  function enforceInlineResultBudget(tab: QueryTab) {
+    const candidates = (tab.resultRuns ?? []).filter((run) => run.inlineRetained && !run.pinned && run.id !== tab.activeResultRunId);
+    candidates.sort((a, b) => (inlineRunAccess.get(a.result!) ?? a.sequence) - (inlineRunAccess.get(b.result!) ?? b.sequence));
+    const rows = (run: QueryResultRun) => (run.results ?? (run.result ? [run.result] : [])).reduce((sum, result) => sum + result.rows.length, 0);
+    let totalRows = candidates.reduce((sum, run) => sum + rows(run), 0);
+    while (candidates.length > 8 || totalRows > 20000) {
+      const removed = candidates.shift()!;
+      totalRows -= rows(removed);
+      void closeResultRunSession(tab, removed);
+      if (removed.resultCacheKey) void deleteTabResultSnapshot(removed.resultCacheKey);
+      inlineRunAccess.delete(removed.result!);
+      tab.resultRuns = tab.resultRuns?.filter((run) => run.id !== removed.id);
+    }
+  }
+  function activateInlineQueryResult(id: string, result: QueryResult, index: number, runId: string | undefined, state: Partial<QueryTab>) {
+    const tab = findExecutionTab(id);
+    if (!tab || tab.isExecuting) return false;
+    const run = runId ? tab.resultRuns?.find((run) => run.id === runId) : undefined;
+    if (runId && (!run || !(run.results ?? (run.result ? [run.result] : [])).includes(result))) return false;
+    if (run && tab.activeResultRunId !== run.id) void setActiveResultRun(id, run.id, { evictInactive: false });
+    setActiveResultIndex(id, index);
+    if (tab.result !== result) return false;
+    // Restore only the shared per-result contract; never assign arbitrary tab fields.
+    for (const key of inlineResultStateKeys) Object.assign(tab, { [key]: state[key] });
+    inlineRunAccess.set(result, ++inlineAccessClock);
+    enforceInlineResultBudget(tab);
+    return true;
+  }
+
   function evictInactiveResultRunPayloads(tab: QueryTab) {
+    enforceInlineResultBudget(tab);
     const activeRunId = tab.activeResultRunId;
     if (!activeRunId || !tab.resultRuns?.length) return;
 
@@ -2297,6 +2335,7 @@ export const useQueryStore = defineStore("query", () => {
       multiDbExecution: options.multiDbExecution,
     };
     if (options.persist !== false) void persistResultRun(tab, run);
+    inlineRunAccess.set(run.result!, ++inlineAccessClock);
     tab.resultRuns = [...(tab.resultRuns ?? []), run];
     tab.activeResultRunId = run.id;
     if (options.reuseResultCacheKey === false) {
@@ -7076,7 +7115,15 @@ export const useQueryStore = defineStore("query", () => {
     // decision after clearing the displayed payload, which caused the result
     // toolbar and grid to briefly disappear before the next Run was added.
     const captureAutoSavedResultRun = tab.mode === "query" && tab.resultAutoSave === true && (!!tab.activeResultRunId || !!tab.result);
-    const captureInlineResultRun = inlineResultConsumers > 0 && tab.mode === "query" && !options?.pagination && !options?.replaceActiveResultInGroup && !options?.retainDisplayedResult && (!options?.publicationOrigin || options.publicationOrigin === "execute") && !options?.batchResume;
+    const captureInlineResultRun =
+      inlineResultConsumers > 0 &&
+      settingsStore.editorSettings.inlineQueryResults === true &&
+      tab.mode === "query" &&
+      !options?.pagination &&
+      !options?.replaceActiveResultInGroup &&
+      !options?.retainDisplayedResult &&
+      (!options?.publicationOrigin || options.publicationOrigin === "execute") &&
+      !options?.batchResume;
     const inlineCaptureOptions: ResultRunCaptureOptions = captureInlineResultRun && !openInNewResultTab && !tab.resultAutoSave ? { inlineRetained: true, persist: false } : {};
     let captureResultRun = openInNewResultTab || captureAutoSavedResultRun || captureInlineResultRun;
     let resultRunToRestore: string | undefined;
@@ -10098,6 +10145,7 @@ export const useQueryStore = defineStore("query", () => {
     invalidateResultEstimateForPayload,
     toggleResultAutoSave,
     setActiveResultRun,
+    activateInlineQueryResult,
     retainInlineQueryResults,
     pruneInlineResultRuns,
     toggleResultRunPinned,

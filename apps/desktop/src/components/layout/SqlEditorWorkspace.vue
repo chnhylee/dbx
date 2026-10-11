@@ -150,7 +150,7 @@ provide(INLINE_QUERY_RESULT_PORTAL, inlineResultPortal);
 const inlineResultTargets = computed(() => (activeTab.value ? inlineResultPortal.targets.get(activeTab.value.id) : undefined));
 const inlineEntries = computed(() => {
   const tab = activeTab.value;
-  return tab ? inlineQueryResultEntries(tab, inlineResultPortal.anchors.get(tab.id)) : [];
+  return settingsStore.editorSettings.inlineQueryResults && tab ? inlineQueryResultEntries(tab, inlineResultPortal.anchors.get(tab.id)) : [];
 });
 const inlineResults = computed(() => {
   return inlineEntries.value.flatMap((entry) => {
@@ -165,12 +165,6 @@ watch(
   },
   { flush: "post" },
 );
-// Widgets outside CodeMirror's rendered viewport have no DOM host. Their
-// results still belong in the editor, so scrolling must not open a bottom pane.
-const hasInlineResults = computed(() => {
-  const available = activeTab.value && inlineResultPortal.available.get(activeTab.value.id);
-  return available ? available.length > 0 : inlineResults.value.length > 0;
-});
 const showSharedResult = computed(() => activeTab.value?.mode === "query");
 const hasSharedOutput = computed(() => showSharedResult.value && hasQueryOutput(activeTab.value));
 
@@ -190,7 +184,7 @@ const showResultPane = computed({
 const isResultPaneVisible = computed(() => hasSharedOutput.value && showResultPane.value);
 // Keep the pane mounted, but apply its target size immediately so available
 // results never wait for an expansion animation before becoming visible.
-const resultPaneTargetSize = computed(() => (isResultPaneVisible.value && !hasInlineResults.value ? resultPaneSize.value : 0));
+const resultPaneTargetSize = computed(() => (isResultPaneVisible.value ? resultPaneSize.value : 0));
 const editorPaneSize = computed(() => 100 - resultPaneTargetSize.value);
 
 /**
@@ -401,7 +395,7 @@ function handleFocusErrorOffset(tabId: string, offset: number): boolean {
           </Splitpanes>
         </Pane>
         <Pane class="min-h-0" :size="resultPaneTargetSize" :min-size="resultPaneTargetSize > 0 ? SHARED_RESULT_PANE_MIN_SIZE : 0" :max-size="SHARED_RESULT_PANE_MAX_SIZE">
-          <div v-if="isResultPaneVisible && !hasInlineResults" data-shared-result-surface class="h-full min-h-0 min-w-0 overflow-hidden">
+          <div v-if="isResultPaneVisible" data-shared-result-surface class="h-full min-h-0 min-w-0 overflow-hidden">
             <QueryResultSurface
               ref="resultSurfaceRef"
               v-bind="resultSurfaceBindings"
@@ -424,7 +418,7 @@ function handleFocusErrorOffset(tabId: string, offset: number): boolean {
               "
             />
           </div>
-          <template v-if="isResultPaneVisible">
+          <template v-if="showSharedResult && settingsStore.editorSettings.inlineQueryResults">
             <Teleport v-for="item in inlineResults" :key="`${activeTab?.id}:${item.key}`" :to="item.target">
               <InlineQueryResultSurface
                 :ref="

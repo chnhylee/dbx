@@ -8799,6 +8799,7 @@ export default withEnglishFallback({
     executeAllOnBlankLineDescription: "在“执行光标所在语句”模式下，光标没有对应语句时执行全部 SQL。默认关闭。",
     showExecutionTargetPicker: "显示执行目标选择器",
     showExecutionTargetPickerDescription: "开启后，无选区执行时可在当前语句和全部 SQL 之间临时选择。",
+    inlineQueryResults: "在 SQL 下方显示查询结果",
     showStatementRunButtons: "显示左侧执行按钮",
     showStatementRunButtonsDescription: "在 SQL 编辑器左侧显示按语句执行的快捷按钮。关闭后仍可通过快捷键和右键菜单执行。",
     locateCursorOnGutterExecute: "左侧执行后光标定位到语句首部",

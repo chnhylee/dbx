@@ -22,6 +22,7 @@ export const EDITOR_SETTINGS_DRAFT_KEYS = [
   "executeMode",
   "executeAllOnBlankLine",
   "showExecutionTargetPicker",
+  "inlineQueryResults",
   "showStatementRunButtons",
   "locateCursorOnGutterExecute",
   "showLineNumbers",

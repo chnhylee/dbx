@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { inlineQueryResultEntries } from "@/lib/editor/inlineQueryResultEntries";
-const mocks = vi.hoisted(() => ({ executeMulti: vi.fn(), closeQuerySession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ executeMulti: vi.fn(), closeQuerySession: vi.fn(), settings: { inlineQueryResults: true, pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false } }));
 vi.mock("@/lib/backend/api", () => ({
   executeMulti: mocks.executeMulti,
   closeQuerySession: mocks.closeQuerySession,
@@ -18,10 +18,11 @@ vi.mock("@/stores/connectionStore", () => ({
     connectionIdentifierQuote: () => "`",
   }),
 }));
-vi.mock("@/stores/settingsStore", () => ({ useSettingsStore: () => ({ editorSettings: { pageSize: 100, globalQueryTimeoutSecs: 30, openTabsRestoreMode: "all", confirmUnsavedSqlClose: false } }) }));
+vi.mock("@/stores/settingsStore", () => ({ useSettingsStore: () => ({ editorSettings: mocks.settings }) }));
 describe("queryStore inline executions", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.settings.inlineQueryResults = true;
     setActivePinia(createPinia());
     mocks.executeMulti.mockImplementation(async (_id, _database, sql: string) => [{ columns: ["value"], rows: [[sql.includes("2") ? 2 : 1]], affected_rows: 0, execution_time_ms: 1 }]);
     mocks.closeQuerySession.mockResolvedValue(true);
@@ -50,6 +51,67 @@ describe("queryStore inline executions", { timeout: 30_000 }, () => {
     expect(entries).toHaveLength(2);
     store.pruneInlineResultRuns(id, new Set(entries.map((entry) => entry.run!.id)));
     expect(tab.resultRuns).toHaveLength(2);
+    release();
+  });
+  it("does not retain results when the inline setting is disabled", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    mocks.settings.inlineQueryResults = false;
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    await store.executeTabSql(id, "SELECT 2;", { sourceOffset: 10 });
+    expect(store.tabs[0]!.resultRuns?.length ?? 0).toBe(0);
+    release();
+  });
+  it("bounds inactive runs and keeps a recently activated older result", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    const tab = store.tabs[0]!;
+    tab.sql = Array.from({ length: 12 }, (_, i) => `SELECT ${i};`).join("\n");
+    for (let i = 0; i < 9; i++) await store.executeTabSql(id, `SELECT ${i};`, { sourceOffset: tab.sql.indexOf(`SELECT ${i};`) });
+    const oldest = tab.resultRuns![0]!;
+    await store.setActiveResultRun(id, oldest.id);
+    await store.executeTabSql(id, "SELECT 9;", { sourceOffset: tab.sql.indexOf("SELECT 9;") });
+    expect(tab.resultRuns).toHaveLength(9);
+    expect(tab.resultRuns!.some((run) => run.id === oldest.id)).toBe(true);
+    expect(tab.resultRuns!.some((run) => run.sequence === 2)).toBe(false);
+    release();
+  });
+  it("evicts an inactive oversized result while retaining the current result", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    mocks.executeMulti.mockResolvedValueOnce([{ columns: ["value"], rows: Array.from({ length: 20001 }, () => [1]), affected_rows: 0, execution_time_ms: 1 }]);
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    await store.executeTabSql(id, "SELECT 2;", { sourceOffset: 10 });
+    expect(store.tabs[0]!.resultRuns).toHaveLength(1);
+    expect(store.tabs[0]!.result?.rows[0]).toEqual([2]);
+    release();
+  });
+  it("restores per-result state through the action without changing tab ownership", async () => {
+    const { useQueryStore } = await import("@/stores/queryStore");
+    const { captureInlineResultState } = await import("@/lib/editor/inlineQueryResultState");
+    const store = useQueryStore();
+    const release = store.retainInlineQueryResults();
+    const id = store.createTab("mysql-1", "db", "Query", "query");
+    await store.executeTabSql(id, "SELECT 1;", { sourceOffset: 0 });
+    const tab = store.tabs[0]!;
+    const first = tab.resultRuns![0]!;
+    tab.resultSortColumn = "first";
+    tab.resultPageOffset = 100;
+    const snapshot = captureInlineResultState(tab);
+    await store.executeTabSql(id, "SELECT 2;", { sourceOffset: 10 });
+    expect(store.activateInlineQueryResult(id, first.result!, 0, first.id, { ...snapshot, id: "wrong", sql: "wrong", txnSessionId: "wrong" })).toBe(true);
+    expect(tab.id).toBe(id);
+    expect(tab.sql).not.toBe("wrong");
+    expect(tab.txnSessionId).not.toBe("wrong");
+    expect(tab.resultSortColumn).toBe("first");
+    expect(tab.resultPageOffset).toBe(100);
+    expect(store.activateInlineQueryResult(id, tab.result!, 0, "missing", snapshot)).toBe(false);
     release();
   });
   it("keeps the original replacement behavior when no inline editor is mounted", async () => {

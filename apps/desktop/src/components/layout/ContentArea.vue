@@ -281,7 +281,7 @@ const emit = defineEmits<ContentAreaSurfaceEmits>();
 const { t } = useI18n();
 const queryStore = useQueryStore();
 const inlineResultPortal = inject<InlineQueryResultPortal | null>(INLINE_QUERY_RESULT_PORTAL, null);
-const editorInlineResults = computed(() => inlineQueryResultEntries(props.activeTab, inlineResultPortal?.anchors.get(props.activeTab.id)).map((entry) => entry.result));
+const editorInlineResults = computed(() => (settingsStore.editorSettings.inlineQueryResults ? inlineQueryResultEntries(props.activeTab, inlineResultPortal?.anchors.get(props.activeTab.id)).map((entry) => entry.result) : []));
 function withResultContext<T>(action: () => T): T {
   props.activateResult?.();
   return action();
@@ -2002,7 +2002,7 @@ defineExpose({
               :compress-request-id="compressSqlRequest?.tabId === activeTab.id ? compressSqlRequest.id : undefined"
               :execution-error="activeQueryError"
               :execution-error-sql="activeTab.lastExecutedSql"
-              :inline-query-results="activeTab.uiState?.resultPaneOpen !== false ? editorInlineResults : []"
+              :inline-query-results="editorInlineResults"
               :result-columns="activeTab.result?.columns"
               :result-source-statement="activeTab.result?.sourceStatement"
               :result-source-from="activeTab.result?.sourceFrom"

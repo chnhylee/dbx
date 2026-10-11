@@ -7,48 +7,15 @@ import type { ContentAreaSurfaceEmits, ContentAreaSurfaceProps } from "./querySu
 import type { QueryResult, QueryResultRun, QueryTab, TabOutputView } from "@/types/database";
 import { INLINE_QUERY_RESULT_PORTAL, type InlineQueryResultPortal } from "@/lib/editor/inlineQueryResultPortal";
 
+import { captureInlineResultState, inlineResultStateKeys } from "@/lib/editor/inlineQueryResultState";
+
 const props = defineProps<ContentAreaSurfaceProps & { result: QueryResult; resultIndex: number; run?: QueryResultRun }>();
 const emit = defineEmits<ContentAreaSurfaceEmits>();
 const store = useQueryStore();
 const portal = inject<InlineQueryResultPortal>(INLINE_QUERY_RESULT_PORTAL);
 const surface = ref<InstanceType<typeof QueryResultSurface> | null>(null);
 const outputView = ref<TabOutputView>("result");
-// The original result panel keeps these fields on the tab. Each inline panel
-// retains its own copy, and restores it before invoking the original actions.
-const stateKeys = [
-  "resultSortColumn",
-  "resultSortColumnIndex",
-  "resultSortDirection",
-  "resultSortMode",
-  "resultSortedSql",
-  "resultLocalSortOriginalRows",
-  "resultLocalSortOriginalLargeValueCells",
-  "resultLocalSortOriginalMongoDocuments",
-  "resultLocalSortOriginalMongoCopyDocuments",
-  "orderByInput",
-  "structuredOrderByInput",
-  "resultPageSql",
-  "resultPageLimit",
-  "resultPageOffset",
-  "resultExecutedPageLimit",
-  "resultExecutedPageOffset",
-  "resultCountSql",
-  "resultTotalRowCount",
-  "resultTotalRowCountLoading",
-  "resultPageJumpProgress",
-  "queryAnalysis",
-  "querySourceColumns",
-  "queryWriteTargets",
-  "queryDisplaySourceColumns",
-  "queryEditabilityReason",
-  "resultColumnComments",
-  "mongoEditTarget",
-  "tableMeta",
-] as const satisfies readonly (keyof QueryTab)[];
-function readState(tab: QueryTab): Partial<QueryTab> {
-  return Object.fromEntries(stateKeys.map((key) => [key, tab[key]]));
-}
-const saved = shallowRef<Partial<QueryTab>>(portal?.states.get(props.result) ?? (props.run ? readState({ ...props.activeTab, ...props.run }) : Object.fromEntries(stateKeys.map((key) => [key, undefined]))));
+const saved = shallowRef<Partial<QueryTab>>(portal?.states.get(props.result) ?? (props.run ? captureInlineResultState({ ...props.activeTab, ...props.run }) : Object.fromEntries(inlineResultStateKeys.map((key) => [key, undefined]))));
 function save(state: Partial<QueryTab>) {
   saved.value = state;
   portal?.states.set(props.result, state);
@@ -62,7 +29,7 @@ watch(
 );
 watchEffect(
   () => {
-    if (isActive.value && !props.activeTab.isExecuting) save(readState(props.activeTab));
+    if (isActive.value && !props.activeTab.isExecuting) save(captureInlineResultState(props.activeTab));
   },
   { flush: "sync" },
 );
@@ -93,14 +60,7 @@ const displayedTab = computed<QueryTab>(() =>
 );
 function activate() {
   if (isActive.value || props.activeTab.isExecuting) return;
-  const state = saved.value;
-  if (props.run && props.activeTab.activeResultRunId !== props.run.id) {
-    // Inline-retained runs stay in memory: projection happens synchronously,
-    // before the original grid's click/callback reads the active context.
-    void store.setActiveResultRun(props.activeTab.id, props.run.id, { evictInactive: false });
-  }
-  store.setActiveResultIndex(props.activeTab.id, props.resultIndex);
-  Object.assign(props.activeTab, state);
+  store.activateInlineQueryResult(props.activeTab.id, props.result, props.resultIndex, props.run?.id, saved.value);
 }
 const forwarders = createContentSurfaceEventForwarders(emit);
 const scopedForwarders = Object.fromEntries(
