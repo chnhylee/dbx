@@ -83,6 +83,7 @@ const bindings = computed(() => ({
   ...props,
   ...scopedForwarders,
   activateResult: activate,
+  closeInlineResult: () => portal?.dismiss(props.activeTab.id, props.result),
   activeTab: displayedTab.value,
   activeOutputView: outputView.value,
   "onUpdate:activeOutputView": (_tabId: string, view: TabOutputView) => {

@@ -50,6 +50,34 @@ describe("inline query result hosts", () => {
     expect(editor.dom.querySelector(".cm-inline-query-result")).toBeNull();
     expect(unmountHost).toHaveBeenCalledTimes(1);
   });
+  it("closes only the requested host while preserving its anchor through edits", () => {
+    const { editor } = mount();
+    const first = result();
+    const second = result({ sourceFrom: 10, sourceTo: 19, sourceStatement: "select 2;" });
+    editor.dispatch({ effects: setInlineQueryResults.of(inlineQueryResultSnapshots(sql, [first, second])) });
+    const secondHost = editor.dom.querySelectorAll(".cm-inline-query-result")[1];
+    const snapshots = currentInlineQueryResults(editor);
+    editor.dispatch({ effects: setInlineQueryResults.of(snapshots.map((item) => ({ ...item, hidden: item.result === first }))) });
+    expect([...editor.dom.querySelectorAll(".cm-inline-query-result")]).toEqual([secondHost]);
+    editor.dispatch({ changes: { from: 0, insert: "-- prefix\n" } });
+    expect(currentInlineQueryResults(editor)[0]).toMatchObject({ from: 0, to: 19, hidden: true, result: first });
+    expect(second.rows).toEqual([[1]]);
+    editor.dispatch({ effects: setInlineQueryResults.of(currentInlineQueryResults(editor).map((item) => ({ ...item, hidden: false }))) });
+    expect(editor.dom.querySelectorAll(".cm-inline-query-result")).toHaveLength(2);
+  });
+  it("scopes dismissal to one tab and one result identity, and allows history to reopen it", () => {
+    const portal = createInlineQueryResultPortal();
+    const first = result();
+    const second = result();
+    portal.dismiss("tab-a", first);
+    expect(portal.isDismissed("tab-a", first)).toBe(true);
+    expect(portal.isDismissed("tab-b", first)).toBe(false);
+    expect(portal.isDismissed("tab-a", second)).toBe(false);
+    portal.dismiss("tab-b", first);
+    portal.reopen("tab-a", first);
+    expect(portal.isDismissed("tab-a", first)).toBe(false);
+    expect(portal.isDismissed("tab-b", first)).toBe(true);
+  });
   it("rejects stale positions and failed results", () => {
     expect(inlineQueryResultSnapshots(sql, [result({ sourceStatement: "select 2;" }), result({ sourceFrom: undefined }), result({ execution_error: true })])).toEqual([]);
   });

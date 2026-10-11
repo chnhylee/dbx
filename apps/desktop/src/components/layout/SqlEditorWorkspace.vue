@@ -154,6 +154,7 @@ const inlineEntries = computed(() => {
 });
 const inlineResults = computed(() => {
   return inlineEntries.value.flatMap((entry) => {
+    if (activeTab.value && inlineResultPortal.isDismissed(activeTab.value.id, entry.result)) return [];
     const target = inlineResultTargets.value?.get(entry.result);
     return target ? [{ ...entry, target, key: `${entry.run?.id ?? "current"}:${entry.index}` }] : [];
   });
@@ -186,7 +187,7 @@ const showResultPane = computed({
 const inlineHistoryOnly = computed(() => {
   const tab = activeTab.value;
   const available = tab ? (inlineResultPortal.available.get(tab.id) ?? inlineEntries.value.map((entry) => entry.result)) : [];
-  return settingsStore.editorSettings.inlineQueryResults && props.activeOutputView === "result" && !!tab?.result && available.includes(tab.result);
+  return settingsStore.editorSettings.inlineQueryResults && props.activeOutputView === "result" && !!tab?.result && (available.includes(tab.result) || inlineResultPortal.isDismissed(tab.id, tab.result));
 });
 const isResultPaneVisible = computed(() => hasSharedOutput.value && showResultPane.value && !inlineHistoryOnly.value);
 // Keep the pane mounted, but apply its target size immediately so available

@@ -273,6 +273,7 @@ const props = defineProps<
     /** Reuse the original Run controls without mounting a duplicate grid. */
     historyOnly?: boolean;
     activateResult?: () => void;
+    closeInlineResult?: () => void;
     /** Whether the query editor should request focus on mount. */
     autoFocus?: boolean;
   }
@@ -1013,7 +1014,9 @@ function toggleResultsPane(): boolean {
  * keep the local collapse behavior.
  */
 function handleHideResultsPane() {
-  if (props.resultOnly) {
+  if (props.inlineResult) {
+    props.closeInlineResult?.();
+  } else if (props.resultOnly) {
     emit("toggleResultsPane");
   } else {
     resultsPaneOpen.value = false;
@@ -1659,6 +1662,7 @@ async function selectResultRun(runId: string) {
     toast(t("tabs.missingResultRun"), 4000);
     return false;
   }
+  if (props.historyOnly && props.activeTab.result) inlineResultPortal?.reopen(props.activeTab.id, props.activeTab.result);
   emit("update:activeOutputView", props.activeTab.id, "result");
   return true;
 }
@@ -2102,7 +2106,15 @@ defineExpose({
               >
                 <Pin class="h-3.5 w-3.5" :class="{ 'fill-current': resultAutoSave }" />
               </Button>
-              <Button v-if="canCloseQueryResult" variant="ghost" size="icon" class="h-6 w-7 shrink-0 text-muted-foreground hover:bg-accent hover:text-foreground" :title="t('tabs.closeResult')" :aria-label="t('tabs.closeResult')" @click="closeCurrentQueryResult">
+              <Button
+                v-if="inlineResult || canCloseQueryResult"
+                variant="ghost"
+                size="icon"
+                class="h-6 w-7 shrink-0 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :title="t('tabs.closeResult')"
+                :aria-label="t('tabs.closeResult')"
+                @click="inlineResult ? closeInlineResult?.() : closeCurrentQueryResult()"
+              >
                 <X class="h-3.5 w-3.5" />
               </Button>
               <template v-if="resultRuns.length > 0 || visibleResultItems.length > 0">
@@ -2179,7 +2191,7 @@ defineExpose({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-                <div v-else-if="resultRuns.length > 0" class="min-w-0 flex-1" />
+                <div v-else-if="!inlineResult && resultRuns.length > 0" class="min-w-0 flex-1" />
                 <span v-if="!historyOnly && !inlineResult && resultRuns.length > 0 && visibleResultItems.length > 1" class="mx-1 h-4 w-px shrink-0 bg-border" />
                 <ResultSetNavigator
                   v-if="!historyOnly && (inlineResult || resultRuns.length === 0 ? visibleResultItems.length > 0 : visibleResultItems.length > 1)"

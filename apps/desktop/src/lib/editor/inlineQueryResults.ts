@@ -6,6 +6,8 @@ export interface InlineQueryResult {
   from: number;
   to: number;
   result: QueryResult;
+  /** Dismiss the host while retaining its mapped SQL anchor and Run history. */
+  hidden?: boolean;
 }
 export const setInlineQueryResults = StateEffect.define<InlineQueryResult[]>();
 /** Only attach a result when its recorded source still matches this document. */
@@ -35,6 +37,9 @@ class ResultWidget extends WidgetType {
   eq(other: ResultWidget): boolean {
     return this.result.result === other.result.result && this.lifecycle === other.lifecycle;
   }
+  get estimatedHeight() {
+    return 420;
+  }
   toDOM(view: EditorView): HTMLElement {
     const host = document.createElement("div");
     host.className = "cm-inline-query-result";
@@ -45,10 +50,14 @@ class ResultWidget extends WidgetType {
       const gutter = view.scrollDOM.querySelector(".cm-gutters")?.getBoundingClientRect().width ?? 0;
       const width = view.scrollDOM.clientWidth - gutter - 8;
       if (width > 0) host.style.width = `${width}px`;
+      // Resizing a grid must also remeasure CodeMirror's block heights and
+      // gutters, including when the grid returns from outside the viewport.
+      if (host.isConnected) view.requestMeasure();
     };
     resize();
     this.resizeObserver = new ResizeObserver(resize);
     this.resizeObserver.observe(view.scrollDOM);
+    this.resizeObserver.observe(host);
     this.lifecycle.mount(host, this.result.result);
     return host;
   }
@@ -64,7 +73,7 @@ class ResultWidget extends WidgetType {
 const hostLifecycle = Facet.define<InlineResultHostLifecycle, InlineResultHostLifecycle>({ combine: (values) => values[0]! });
 function decorations(state: EditorState, results: InlineQueryResult[]): DecorationSet {
   return Decoration.set(
-    results.map((result) => Decoration.widget({ widget: new ResultWidget(result, state.facet(hostLifecycle)), block: true, side: 1 }).range(state.doc.lineAt(result.to).to)),
+    results.filter((result) => !result.hidden).map((result) => Decoration.widget({ widget: new ResultWidget(result, state.facet(hostLifecycle)), block: true, side: 1 }).range(state.doc.lineAt(result.to).to)),
     true,
   );
 }
@@ -83,7 +92,10 @@ const field = StateField.define<{ results: InlineQueryResult[]; decorations: Dec
     }
     for (const effect of transaction.effects) {
       if (effect.is(setInlineQueryResults)) {
-        results = effect.value.map((incoming) => results.find((existing) => existing.result === incoming.result) ?? incoming);
+        results = effect.value.map((incoming) => {
+          const existing = results.find((item) => item.result === incoming.result);
+          return existing ? { ...existing, hidden: incoming.hidden } : incoming;
+        });
       }
     }
     if (results === value.results && !transaction.docChanged) return value;
@@ -100,11 +112,20 @@ export function inlineQueryResultsExtension(lifecycle: InlineResultHostLifecycle
     field,
     EditorView.updateListener.of((update) => {
       if (update.docChanged || update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(setInlineQueryResults)))) {
-        lifecycle.sync?.(currentInlineQueryResults(update.view).map((item) => item.result));
+        lifecycle.sync?.(
+          currentInlineQueryResults(update.view)
+            .filter((item) => !item.hidden)
+            .map((item) => item.result),
+        );
       }
     }),
     EditorView.baseTheme({
-      ".cm-inline-query-result": { height: "420px", minHeight: "180px", minWidth: "0", maxWidth: "100%", boxSizing: "border-box", margin: "6px 0", overflow: "hidden", resize: "vertical", whiteSpace: "normal", fontFamily: "system-ui", fontSize: "12px" },
+      // CodeMirror measures a block's border box, not its margins. Internal
+      // spacing prevents cumulative line-number drift after each result.
+      ".cm-inline-query-result": { height: "420px", minHeight: "180px", minWidth: "0", maxWidth: "100%", boxSizing: "border-box", padding: "6px 0", overflow: "hidden", resize: "vertical", whiteSpace: "normal", fontFamily: "system-ui", fontSize: "12px", userSelect: "none", WebkitUserSelect: "none" },
+      // The surrounding SQL selection must not paint grid/tool/footer text.
+      // Keep native selection available in the grid's actual input editors.
+      ".cm-inline-query-result input, .cm-inline-query-result textarea, .cm-inline-query-result [contenteditable=true]": { userSelect: "text", WebkitUserSelect: "text" },
     }),
   ];
 }

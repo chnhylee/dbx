@@ -2393,14 +2393,15 @@ watch(
 
 let inlineResultsTabId: string | undefined;
 watch(
-  () => [view.value, props.tabId, props.inlineQueryResults, props.inlineQueryResults?.map((result) => result.rows.length).join(",")],
+  () => [view.value, props.tabId, props.inlineQueryResults, props.inlineQueryResults?.map((result) => `${result.rows.length}:${inlineResultPortal?.isDismissed(props.tabId ?? "", result)}`).join(",")],
   () => {
     const currentView = view.value;
     if (!currentView) return;
     const previous = inlineResultsTabId === props.tabId ? currentInlineQueryResults(currentView) : (inlineResultPortal?.anchors.get(props.tabId ?? "") ?? []);
     if (inlineResultsTabId !== props.tabId) currentView.dispatch({ effects: setInlineQueryResults.of([]) });
     inlineResultsTabId = props.tabId;
-    currentView.dispatch({ effects: setInlineQueryResults.of(inlineQueryResultSnapshots(currentView.state.doc.toString(), inlineResultPortal ? (props.inlineQueryResults ?? []) : [], previous)) });
+    const snapshots = inlineQueryResultSnapshots(currentView.state.doc.toString(), inlineResultPortal ? (props.inlineQueryResults ?? []) : [], previous).map((item) => ({ ...item, hidden: inlineResultPortal?.isDismissed(props.tabId ?? "", item.result) }));
+    currentView.dispatch({ effects: setInlineQueryResults.of(snapshots) });
   },
   { flush: "post" },
 );

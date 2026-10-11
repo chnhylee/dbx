@@ -89,7 +89,7 @@ vi.mock("@/components/layout/EditorToolbar.vue", () => ({
 vi.mock("@/components/layout/QueryResultSurface.vue", () => ({
   default: {
     name: "QueryResultSurfaceStub",
-    props: ["activeTab", "historyOnly"],
+    props: ["activeTab", "historyOnly", "closeInlineResult"],
     emits: ["previewStatement", "focusStatement"],
     methods: {
       handleModRTarget(target: Element) {
@@ -101,7 +101,7 @@ vi.mock("@/components/layout/QueryResultSurface.vue", () => ({
         return true;
       },
     },
-    template: `<div :data-inline-result-history="historyOnly ? '' : undefined" :data-test="historyOnly ? 'result-history' : 'result-surface'" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-executing="activeTab?.isExecuting" :data-live-messages="activeTab?.liveQueryMessages?.length ?? 0" :data-sort-column="activeTab?.resultSortColumn" :data-grid-revision="activeTab?.resultGridRevision">{{ activeTab?.id }}<button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
+    template: `<div :data-inline-result-history="historyOnly ? '' : undefined" :data-test="historyOnly ? 'result-history' : 'result-surface'" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-executing="activeTab?.isExecuting" :data-live-messages="activeTab?.liveQueryMessages?.length ?? 0" :data-sort-column="activeTab?.resultSortColumn" :data-grid-revision="activeTab?.resultGridRevision">{{ activeTab?.id }}<button v-if="closeInlineResult" data-test="close-inline" @click="closeInlineResult()">close</button><button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
   },
 }));
 
@@ -285,6 +285,45 @@ describe("SqlEditorWorkspace mount contract", () => {
       inlinePortals[0]!.sync("offscreen", []);
       await nextTick();
       expect(workspace.host.querySelector("[data-shared-result-surface]")).not.toBeNull();
+    } finally {
+      workspace.cleanup();
+    }
+  });
+  it("dismisses individual grids without deleting sibling results, Run history or opening a bottom grid", async () => {
+    const queryTab = tab("dismiss");
+    queryTab.sql = "SELECT 1;\nSELECT 2;";
+    const first = { ...queryTab.result!, rows: [[1]], sourceStatement: "SELECT 1;", sourceTo: 9 };
+    const second = { ...first, rows: [[2]], sourceStatement: "SELECT 2;", sourceFrom: 10, sourceTo: 19 };
+    queryTab.resultRuns = [{ id: "batch", title: "", sequence: 1, createdAt: 1, sql: queryTab.sql, result: second, results: [first, second], activeResultIndex: 1, inlineRetained: true }];
+    queryTab.result = second;
+    queryTab.results = [first, second];
+    queryTab.activeResultRunId = "batch";
+    queryTab.activeResultIndex = 1;
+    const workspace = mountOutputWorkspace([queryTab], true);
+    try {
+      const tab = workspace.store.tabs[0]!;
+      const portal = inlinePortals[0]!;
+      const firstHost = document.createElement("div");
+      const secondHost = document.createElement("div");
+      workspace.host.append(firstHost, secondHost);
+      portal.mount(tab.id, tab.results![0]!, firstHost);
+      portal.mount(tab.id, tab.results![1]!, secondHost);
+      await nextTick();
+      firstHost.querySelector<HTMLButtonElement>('[data-test="close-inline"]')!.click();
+      await nextTick();
+      expect(firstHost.children).toHaveLength(0);
+      expect(secondHost.querySelector('[data-test="result-surface"]')).not.toBeNull();
+      secondHost.querySelector<HTMLButtonElement>('[data-test="close-inline"]')!.click();
+      portal.sync(tab.id, []);
+      await nextTick();
+      expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(0);
+      expect(workspace.host.querySelector('[data-test="result-history"]')).not.toBeNull();
+      expect(tab.resultRuns).toHaveLength(1);
+      expect(tab.results?.map((result) => result.rows)).toEqual([[[1]], [[2]]]);
+      portal.reopen(tab.id, tab.results![0]!);
+      await nextTick();
+      expect(firstHost.querySelector('[data-test="result-surface"]')).not.toBeNull();
+      expect(secondHost.children).toHaveLength(0);
     } finally {
       workspace.cleanup();
     }
