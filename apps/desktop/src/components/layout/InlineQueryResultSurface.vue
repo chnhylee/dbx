@@ -43,7 +43,7 @@ watch(
   { immediate: true },
 );
 const displayedTab = computed<QueryTab>(() =>
-  isActive.value
+  isActive.value && !props.activeTab.isExecuting
     ? props.activeTab
     : {
         ...props.activeTab,
@@ -56,6 +56,13 @@ const displayedTab = computed<QueryTab>(() =>
         activeResultRunId: props.run?.id ?? props.activeTab.activeResultRunId,
         activeResultIndex: props.resultIndex,
         resultPageOffset: saved.value.resultPageOffset ?? 0,
+        // The tab executes another statement while these immutable results
+        // remain visible. Its loading flags and streamed notices belong to
+        // that execution, not to every retained grid.
+        isExecuting: false,
+        isExplaining: false,
+        isCancelling: false,
+        liveQueryMessages: undefined,
       },
 );
 function activate() {

@@ -6,6 +6,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSidebarMenuPresentation } from "@/composables/useSidebarMenuPresentation";
 import { useToast } from "@/composables/useToast";
 import type { ColumnInfo, ObjectSourceKind, QueryTab, TableInfo, TableNameFilter, TreeNode, TreeNodeType } from "@/types/database";
 import type { ElasticsearchIndexMetadataKind } from "@/lib/backend/tauri";
@@ -25,6 +26,7 @@ import {
   localTableSearchParentTypes,
 } from "@/lib/sidebar/sidebarSearchTree";
 import { createSidebarLabelMatcher } from "@/lib/sidebar/sidebarSearch";
+import { firstSidebarSearchMatchDataNode, hasActiveSidebarSearch } from "@/lib/sidebar/sidebarSearchEnter";
 import { collectSidebarRegexIndexScopes, resolveSidebarRemoteSearchQuery, resolveSidebarSearchDispatchMode, shouldRestoreTrackedSidebarSearchTargetsInRegexMode } from "@/lib/sidebar/sidebarRegexSearchIndex";
 import { needsSidebarObjectGroupDiscovery } from "@/lib/sidebar/sidebarSearchDiscovery";
 import { isSidebarSearchPrunedDatabaseNode, resolveSidebarSearchDatabaseScope } from "@/lib/sidebar/sidebarSearchDatabaseScope";
@@ -32,6 +34,7 @@ import { createSidebarSearchExpansionState } from "@/lib/sidebar/sidebarSearchEx
 import { createSidebarSearchLoadingTracker } from "@/lib/sidebar/sidebarSearchLoadingTracker";
 import { isCancelSearchShortcut, isCopySidebarSelectionShortcut, isDisconnectSidebarConnectionShortcut, isEditSidebarConnectionShortcut, isPasteSidebarSelectionShortcut, isViewTableDdlShortcut } from "@/lib/editor/keyboardShortcuts";
 import { sidebarNodeSupportsDdlView } from "@/lib/sidebar/sidebarTreeDdlShortcut";
+import { hasTreeNodeDatabaseContext } from "@/lib/sidebar/treeNodeContext";
 import { objectSourceTargetForTreeNode } from "@/lib/sidebar/treeNodeClick";
 import { supportsTypeObjectSource } from "@/lib/database/databaseObjectCapabilities";
 import { copyToClipboard } from "@/lib/common/clipboard";
@@ -125,6 +128,7 @@ const sidebarScrollbarTrackRef = ref<HTMLElement | null>(null);
 const sidebarHorizontalScrollbarTrackRef = ref<HTMLElement | null>(null);
 const sidebarContextMenuRef = ref<{ close: () => void } | null>(null);
 const sidebarContextMenuItems = ref<ContextMenuItem[]>([]);
+const { presentMenu, SidebarMenuPreferencesDialog, sidebarMenuPreferencesOpen, sidebarMenuPreferences } = useSidebarMenuPresentation();
 const emit = defineEmits<{
   "open-settings": [initialTab: string];
   "add-to-ai": [nodes: TreeNode | TreeNode[]];
@@ -2042,8 +2046,18 @@ function findSchemaNode(nodes: TreeNode[], connId: string, database: string, sch
 function onSearchToggle(node: TreeNode) {
   if (!isTreeSearchFiltering.value || !node.children) return;
   const next = new Set(searchCollapsedIds.value);
-  if (node.isExpanded) next.add(node.id);
-  else next.delete(node.id);
+  if (node.isExpanded) {
+    next.add(node.id);
+    const collectDescendants = (children: readonly TreeNode[]) => {
+      for (const child of children) {
+        next.add(child.id);
+        if (child.children?.length) collectDescendants(child.children);
+      }
+    };
+    collectDescendants(node.children);
+  } else {
+    next.delete(node.id);
+  }
   searchCollapsedIds.value = next;
 }
 
@@ -2068,6 +2082,7 @@ function openSidebarContextMenu(event: MouseEvent, node: TreeNode, openContextMe
   const resolved = sidebarTreeRuntime.resolveContextMenu(node, items);
   const show = (menuItems: ContextMenuItem[]) => {
     if (request !== contextMenuRequest) return;
+    menuItems = presentMenu(menuItems, node.type);
     sidebarContextMenuTarget.value = createSidebarActionTarget(node);
     sidebarContextMenuItems.value = menuItems;
     // Pass the current row's resolved menu atomically, including async plugin items.
@@ -2150,7 +2165,7 @@ function tableDdlObjectTypeForSidebarNode(type: TreeNodeType): ObjectSourceKind 
 }
 
 function openSidebarDdl(node: TreeNode) {
-  if (!node.connectionId || !node.database) return;
+  if (!node.connectionId || !hasTreeNodeDatabaseContext(node)) return;
   beginSidebarAction();
   sidebarDdlTarget.value = createSidebarActionTarget(node);
   sidebarDdlOpen.value = true;
@@ -2172,7 +2187,7 @@ function openSidebarElasticsearchIndexMetadata(node: TreeNode, kind: Elasticsear
 }
 
 function openSidebarObjectSource(node: TreeNode, initialEditing: boolean) {
-  if (!node.connectionId || !node.database || !objectSourceTargetForTreeNode(node)) return;
+  if (!node.connectionId || !hasTreeNodeDatabaseContext(node) || !objectSourceTargetForTreeNode(node)) return;
   // TYPE/TYPE_BODY only have a source implementation on Xugu; PostgreSQL-family
   // connections list user-defined types without a CREATE TYPE getter this cycle.
   if ((node.type === "type" || node.type === "type-body") && !supportsTypeObjectSource(store.getConfig(node.connectionId)?.db_type)) return;
@@ -2189,7 +2204,7 @@ function openSidebarSettings(initialTab: string) {
 }
 
 function openSidebarProcedure(node: TreeNode) {
-  if (node.type !== "procedure" || !node.connectionId || !node.database) return;
+  if (node.type !== "procedure" || !node.connectionId || !hasTreeNodeDatabaseContext(node)) return;
   beginSidebarAction();
   sidebarProcedureTarget.value = createSidebarActionTarget(node);
   sidebarProcedureOpen.value = true;
@@ -2235,7 +2250,7 @@ function openSidebarVisibleNacosNamespaces(node: TreeNode) {
 }
 
 function tableNameFilterScopeForNode(node: TreeNode): string | null {
-  if (!node.connectionId || !node.database) return null;
+  if (!node.connectionId || !hasTreeNodeDatabaseContext(node)) return null;
   return store.tableNameFilterScopeKey({
     connectionId: node.connectionId,
     database: node.database,
@@ -2421,6 +2436,14 @@ function focusSearch(target: Element | null = null): boolean {
 }
 
 function onSearchKeydown(event: KeyboardEvent) {
+  if (event.key === "Enter" && !event.isComposing && !event.defaultPrevented) {
+    const node = firstSidebarSearchMatchDataNode(visibleNodes.value, hasActiveSidebarSearch(searchQuery.value, store.sidebarTableSearchQueries));
+    if (node) {
+      event.preventDefault();
+      sidebarTreeRuntimeHostRef.value?.handleRowClick(node, 1);
+    }
+    return;
+  }
   if (!isCancelSearchShortcut(event)) return;
   event.preventDefault();
   searchQuery.value = "";
@@ -2851,6 +2874,8 @@ defineExpose({ focusSearch, createNewGroup, collapseAllTreeNodes, locateTabInSid
         </div>
       </div>
     </CustomContextMenu>
+
+    <SidebarMenuPreferencesDialog v-if="sidebarMenuPreferences" v-model:open="sidebarMenuPreferencesOpen" :scope="sidebarMenuPreferences.scope" :items="sidebarMenuPreferences.items" />
     <div v-if="showConnectedConnectionsOnly && store.connectedIds.size > 0" class="shrink-0 border-t border-border bg-background px-2 py-2">
       <Button type="button" variant="outline" size="sm" class="h-7 w-full justify-center gap-1.5 text-xs" :disabled="isDisconnectingAllActiveConnections" @click="disconnectAllActiveConnections">
         <Loader2 v-if="isDisconnectingAllActiveConnections" class="h-3.5 w-3.5 animate-spin" />

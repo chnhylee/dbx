@@ -101,7 +101,7 @@ vi.mock("@/components/layout/QueryResultSurface.vue", () => ({
         return true;
       },
     },
-    template: `<div :data-inline-result-history="historyOnly ? '' : undefined" :data-test="historyOnly ? 'result-history' : 'result-surface'" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-sort-column="activeTab?.resultSortColumn" :data-grid-revision="activeTab?.resultGridRevision">{{ activeTab?.id }}<button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
+    template: `<div :data-inline-result-history="historyOnly ? '' : undefined" :data-test="historyOnly ? 'result-history' : 'result-surface'" :data-result-value="activeTab?.result?.rows[0]?.[0]" :data-executing="activeTab?.isExecuting" :data-live-messages="activeTab?.liveQueryMessages?.length ?? 0" :data-sort-column="activeTab?.resultSortColumn" :data-grid-revision="activeTab?.resultGridRevision">{{ activeTab?.id }}<button data-test="emit-preview" @click="$emit('previewStatement', 'tab-a', { from: 0, to: 8 })">preview</button><button data-test="emit-focus" @click="$emit('focusStatement', 'tab-a', { from: 0, to: 8 })">focus</button></div>`,
   },
 }));
 
@@ -246,6 +246,16 @@ describe("SqlEditorWorkspace mount contract", () => {
       expect(workspace.host.querySelectorAll('[data-test="result-surface"]')).toHaveLength(2);
       expect(firstHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-result-value")).toBe("1");
       expect(secondHost.querySelector('[data-test="result-surface"]')?.getAttribute("data-result-value")).toBe("2");
+      tab.isExecuting = true;
+      tab.liveQueryMessages = [{ severity: "NOTICE", message: "another statement" }];
+      await nextTick();
+      for (const host of [firstHost, secondHost]) {
+        expect(host.querySelector('[data-test="result-surface"]')?.getAttribute("data-executing")).toBe("false");
+        expect(host.querySelector('[data-test="result-surface"]')?.getAttribute("data-live-messages")).toBe("0");
+      }
+      tab.isExecuting = false;
+      tab.liveQueryMessages = undefined;
+      await nextTick();
       secondHost.querySelector("[data-shared-result-surface]")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       await nextTick();
       expect(tab.activeResultIndex).toBe(1);
